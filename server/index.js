@@ -36,12 +36,27 @@ function resolvePublicKeyPath() {
 }
 
 // Hosts like Render have no writable repo to drop a PEM into, so the key can
-// also be supplied inline as an env var. \n escapes are accepted for
-// single-line env editors.
+// also be supplied inline as an env var. Pasting into a dashboard field
+// routinely mangles the line breaks — and a PEM whose header and body run
+// together is unparseable — so rebuild the canonical form from the base64
+// payload rather than trusting the whitespace we were given.
+function normalizePem(raw) {
+  const text = raw.replace(/\\n/g, '\n');
+  const match = text.match(/-----BEGIN ([A-Z ]+)-----([\s\S]*?)-----END \1-----/);
+  if (!match) return null;
+
+  const label = match[1];
+  const body = match[2].replace(/[^A-Za-z0-9+/=]/g, '');
+  if (!body) return null;
+
+  const wrapped = body.match(/.{1,64}/g).join('\n');
+  return `-----BEGIN ${label}-----\n${wrapped}\n-----END ${label}-----\n`;
+}
+
 function inlinePublicKey() {
   const raw = process.env.TESLA_PUBLIC_KEY_PEM;
   if (!raw || !raw.trim()) return null;
-  return raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
+  return normalizePem(raw);
 }
 
 function hasPublicKey() {
@@ -52,7 +67,7 @@ app.get('/.well-known/appspecific/com.tesla.3p.public-key.pem', (req, res) => {
   const inline = inlinePublicKey();
   if (inline) {
     res.type('application/x-pem-file');
-    return res.send(inline.endsWith('\n') ? inline : inline + '\n');
+    return res.send(inline);
   }
 
   const pemPath = resolvePublicKeyPath();
