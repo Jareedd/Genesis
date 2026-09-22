@@ -140,7 +140,15 @@ first. The registration uses the `client_credentials` grant, so
 
 ---
 
-## 6. Free tier caveat
+## 6. Find your vehicle id
+
+After OAuth, open `https://<your-domain>/api/vehicles`. It lists the cars on
+the account; copy the `id` column into `TESLA_VEHICLE_ID`. (The VIN and
+`vehicle_id` are shown too, but `id` is the one this app wants.)
+
+---
+
+## 7. Free tier caveat
 
 Free Render services sleep after ~15 minutes of no traffic and take ~30–60s to
 wake. In the car that means a long first load, then normal behaviour (the 5s
@@ -149,7 +157,7 @@ or an external uptime pinger avoids the cold start.
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause |
 |---|---|

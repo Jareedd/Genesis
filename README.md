@@ -176,6 +176,8 @@ should use `TESLA_REFRESH_TOKEN` rather than a static access token.
 | `GET /api/health` | Token / vehicle / PEM presence |
 | `GET /api/media_state` | Live media from Fleet `vehicle_data` |
 | `GET /api/lyrics?title=&artist=&duration=` | LRCLIB synced lines |
+| `GET /api/vehicles` | Vehicles on the account — the `id` for `TESLA_VEHICLE_ID` |
+| `GET /api/partner/register` | One-time Tesla partner domain registration |
 | `GET /oauth/start` | Begin OAuth |
 | `GET /.well-known/appspecific/com.tesla.3p.public-key.pem` | Partner public key |
 
