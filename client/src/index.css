@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-black text-white antialiased;
+  /* Tesla in-car browser is happier without overscroll bounce */
+  overscroll-behavior: none;
+}
