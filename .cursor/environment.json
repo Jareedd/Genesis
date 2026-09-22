@@ -1,0 +1,21 @@
+{
+  "name": "Tesla Lyrics App",
+  "install": "npm install && npm run install:all && npm run build && cp -n server/keys/com.tesla.3p.public-key.pem.example server/keys/com.tesla.3p.public-key.pem || true",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "npm run dev",
+      "description": "Runs the Express API (port 3001) and the Vite client dev server (port 5173, proxies /api). Open http://localhost:5173."
+    }
+  ],
+  "ports": [
+    {
+      "name": "client",
+      "port": 5173
+    },
+    {
+      "name": "server",
+      "port": 3001
+    }
+  ]
+}
