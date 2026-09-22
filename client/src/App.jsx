@@ -123,14 +123,23 @@ export default function App() {
         const delta = Date.now() - anchorWallMs.current;
         let next = anchorElapsedMs.current + delta;
         const dur = durationMsRef.current;
-        if (dur > 0 && next > dur) next = dur;
+        if (dur > 0 && next > dur) {
+          if (demo) {
+            // Loop demo so visual QA / cabin preview never freezes on the last line
+            anchorElapsedMs.current = 0;
+            anchorWallMs.current = Date.now();
+            next = 0;
+          } else {
+            next = dur;
+          }
+        }
         setCurrentPositionMs(next);
       }
       rafRef.current = requestAnimationFrame(tick);
     }
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, []);
+  }, [demo]);
 
   // Fetch lyrics when title/artist change
   useEffect(() => {

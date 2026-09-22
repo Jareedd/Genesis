@@ -8,6 +8,20 @@ function formatTime(ms) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+function friendlyStatus(status) {
+  if (!status) return '';
+  const map = {
+    missing_token: 'Add Tesla token',
+    missing_vehicle_id: 'Set vehicle id',
+    vehicle_asleep: 'Vehicle asleep',
+    network_error: 'Reconnect…',
+  };
+  if (status.error && map[status.error]) return map[status.error];
+  const msg = status.message || '';
+  if (msg.length > 42) return `${msg.slice(0, 40)}…`;
+  return msg;
+}
+
 export default function NowPlaying({ media, status, positionMs }) {
   const title = media?.title || 'Nothing playing';
   const artist = media?.artist || 'Waiting for media';
@@ -58,8 +72,8 @@ export default function NowPlaying({ media, status, positionMs }) {
         </div>
 
         {!connected && status?.error ? (
-          <div className="max-w-[12rem] shrink-0 text-right text-xs leading-snug text-teslyr-mute">
-            {status.message}
+          <div className="max-w-[11rem] shrink-0 text-right text-xs leading-snug text-teslyr-mute">
+            {friendlyStatus(status)}
           </div>
         ) : null}
       </div>
