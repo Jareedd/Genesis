@@ -95,35 +95,29 @@ export default function LyricsView({
     );
   }
 
+  // Spotify-style top/bottom fade via a mask so it reads over any track color.
+  const fadeMask =
+    'linear-gradient(to bottom, transparent 0%, #000 14%, #000 86%, transparent 100%)';
+
   return (
     <div className="relative h-full overflow-hidden">
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-[#050505] via-[#050505]/70 to-transparent" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-24 bg-gradient-to-t from-[#050505] via-[#050505]/80 to-transparent" />
-
       <div
         ref={containerRef}
-        className="px-6 py-[38vh] transition-transform duration-500 ease-out will-change-transform sm:px-10"
+        className="px-6 py-[42vh] transition-transform duration-500 ease-out will-change-transform sm:px-12"
+        style={{ maskImage: fadeMask, WebkitMaskImage: fadeMask }}
       >
         {lines.map((line, i) => {
-          const distance = Math.abs(i - activeIndex);
-          const active = distance === 0;
-          const near = distance === 1;
-          const far = distance > 3;
+          const active = i === activeIndex;
+          const sung = activeIndex >= 0 && i < activeIndex;
 
           let className =
-            'lyric-line my-3 text-center font-medium leading-snug text-teslyr-mute';
+            'lyric-line my-6 max-w-4xl text-left font-display font-extrabold leading-[1.12] tracking-tight text-3xl sm:text-5xl ';
           if (active) {
-            className =
-              'lyric-line lyric-line-active my-5 scale-105 text-center font-display text-4xl font-bold leading-snug text-teslyr-ember sm:text-5xl';
-          } else if (near) {
-            className =
-              'lyric-line my-3.5 scale-100 text-center text-2xl font-semibold leading-snug text-teslyr-soft sm:text-3xl';
-          } else if (far) {
-            className =
-              'lyric-line my-3 text-center text-lg leading-snug text-white/25 sm:text-xl';
+            className += 'lyric-line-active text-white';
+          } else if (sung) {
+            className += 'text-white/30';
           } else {
-            className =
-              'lyric-line my-3 text-center text-xl leading-snug text-teslyr-mute sm:text-2xl';
+            className += 'text-white/50';
           }
 
           return (

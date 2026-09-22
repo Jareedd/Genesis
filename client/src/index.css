@@ -48,10 +48,10 @@ body {
 }
 
 .lyric-line-active {
-  text-shadow: 0 0 28px rgba(225, 6, 0, 0.35);
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
 }
 
 .progress-fill {
-  background: linear-gradient(90deg, #e10600, #ff3b30);
-  box-shadow: 0 0 12px rgba(225, 6, 0, 0.45);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.35);
 }

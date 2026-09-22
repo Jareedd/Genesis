@@ -25,6 +25,22 @@ function trackKey(media) {
   return `${media.title || ''}|${media.artist || ''}`;
 }
 
+// Spotify-style: derive a vibrant, immersive background color per track (stands
+// in for the cover-art color, which the Fleet API doesn't expose).
+function trackBackground(media) {
+  if (!media?.title) return null;
+  const key = `${media.title}|${media.artist || ''}`;
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  const hue = hash % 360;
+  return (
+    `radial-gradient(120% 80% at 15% 0%, hsl(${hue} 70% 42%) 0%, transparent 60%),` +
+    `linear-gradient(180deg, hsl(${hue} 58% 30%) 0%, hsl(${hue} 62% 18%) 45%, hsl(${hue} 68% 8%) 100%)`
+  );
+}
+
 export default function App() {
   const [media, setMedia] = useState(null);
   const [status, setStatus] = useState({ ok: false, message: 'Connecting…' });
@@ -202,9 +218,13 @@ export default function App() {
   }, [media, demo]);
 
   const hasTrack = Boolean(media?.title);
+  const trackBg = trackBackground(media);
 
   return (
-    <div className="teslyr-stage relative flex h-full w-full flex-col text-white">
+    <div
+      className="teslyr-stage relative flex h-full w-full flex-col text-white transition-[background] duration-700 ease-out"
+      style={trackBg ? { background: trackBg } : undefined}
+    >
       <div className="teslyr-grid pointer-events-none absolute inset-0" aria-hidden />
 
       <NowPlaying media={media} status={status} positionMs={currentPositionMs} />
