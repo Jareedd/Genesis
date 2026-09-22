@@ -83,12 +83,27 @@ Tesla requires the PEM at
 domain. Render has no writable repo directory to drop a file into, so the
 server also accepts the key inline:
 
+Tesla requires an **EC key on the prime256v1 (NIST P-256) curve** — an RSA key
+is rejected during partner registration.
+
 ```bash
-openssl genrsa -out private-key.pem 2048
-openssl rsa -in private-key.pem -pubout          # copy this output
+# 1. private key — keep this secret, never commit it, never upload it
+openssl ecparam -name prime256v1 -genkey -noout -out private-key.pem
+
+# 2. public key — this is the part you host / paste into Render
+openssl ec -in private-key.pem -pubout
 ```
 
-Paste that output into `TESLA_PUBLIC_KEY_PEM` (the Environment tab accepts
+Step 2 prints a short block like:
+
+```
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
+-----END PUBLIC KEY-----
+```
+
+Paste that whole block — including both `-----BEGIN/END-----` lines — into
+`TESLA_PUBLIC_KEY_PEM` (the Environment tab accepts
 multi-line values; single-line `\n` escapes also work). Keep
 `private-key.pem` off the server and out of git. Alternatively use a Render
 **Secret File** and point `TESLA_PUBLIC_KEY_PATH` at
