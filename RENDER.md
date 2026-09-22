@@ -47,6 +47,7 @@ Set these in the service's **Environment** tab:
 | `TESLA_ACCESS_TOKEN` | optional | short-lived; only useful for a quick test |
 | `TESLA_FLEET_BASE_URL` | no | defaults to the North America host |
 | `TESLA_PUBLIC_KEY_PEM` | for partner onboarding | the PEM contents pasted inline (§4) |
+| `TESLA_PARTNER_DOMAIN` | no | defaults to the host of `TESLA_REDIRECT_URI` |
 | `NODE_VERSION` | no | pinned to `20` in `render.yaml` |
 
 `.env` is gitignored and is **not** read on Render — the dashboard is the only
@@ -119,7 +120,27 @@ to the service name.
 
 ---
 
-## 5. Free tier caveat
+## 5. Register your domain with Tesla
+
+Tesla will not return vehicle data until your app's domain is registered. This
+is a **one-time** call, and it has to happen *after* the public key is live.
+
+1. Confirm the key loads publicly:
+   `https://lyrc.world/.well-known/appspecific/com.tesla.3p.public-key.pem`
+2. Visit `https://<your-domain>/api/partner/register` and press the button
+3. A success response looks like `{"ok": true, "domain": "...", "status": 200}`
+
+The domain is taken from `TESLA_PARTNER_DOMAIN` if set, otherwise from the
+host part of `TESLA_REDIRECT_URI` — so usually there is nothing extra to
+configure. Re-running it is harmless.
+
+If it returns 403/412, Tesla could not fetch your public key — fix step 1
+first. The registration uses the `client_credentials` grant, so
+`TESLA_CLIENT_ID` and `TESLA_CLIENT_SECRET` must both be set.
+
+---
+
+## 6. Free tier caveat
 
 Free Render services sleep after ~15 minutes of no traffic and take ~30–60s to
 wake. In the car that means a long first load, then normal behaviour (the 5s
@@ -128,7 +149,7 @@ or an external uptime pinger avoids the cold start.
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Cause |
 |---|---|
@@ -136,5 +157,7 @@ or an external uptime pinger avoids the cold start.
 | Build succeeds, app shows "Not Found" at `/` | `npm run build` didn't run, or `NODE_ENV` isn't `production` — check `clientBuilt` in `/api/health` |
 | Deploy hangs, "no open ports detected" | a `PORT` env var was set, overriding Render's |
 | `/api/media_state` → `unauthorized` | token expired; set `TESLA_REFRESH_TOKEN` (§3) |
+| Registration returns 403 or 412 | Tesla can't fetch your public key — test that URL in a browser first |
+| Vehicle data 403s despite a valid token | domain never registered — do §5 |
 | `/api/media_state` → `vehicle_asleep` | wake the car from the Tesla app; Fleet returns 408/504 while asleep |
 | OAuth callback → `invalid redirect_uri` | `TESLA_REDIRECT_URI` doesn't byte-match the portal entry (watch the trailing slash) |
