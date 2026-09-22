@@ -156,6 +156,16 @@ NODE_ENV=production npm start
 # Open http://localhost:3001
 ```
 
+## Deploying (Render)
+
+See **[RENDER.md](RENDER.md)** for the full walkthrough — blueprint, build
+command, env vars, and the token/public-key setup that hosted deploys need.
+Short version: the repo ships a `render.yaml`, the build command must be
+`npm ci --include=dev && npm run install:all && npm run build`, and production
+should use `TESLA_REFRESH_TOKEN` rather than a static access token.
+
+---
+
 ### Useful endpoints
 
 | Path | Description |

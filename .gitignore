@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# secrets — never commit these
+.env
+.env.local
+.env.*.local
+private-key.pem
+server/keys/com.tesla.3p.public-key.pem
+
+# logs / os
+npm-debug.log*
+*.log
+.DS_Store

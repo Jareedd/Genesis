@@ -11,7 +11,7 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-const { getMediaState } = require('./tesla');
+const { getMediaState, canRefresh } = require('./tesla');
 const { fetchLyrics } = require('./lyrics');
 
 const app = express();
@@ -35,14 +35,33 @@ function resolvePublicKeyPath() {
   return null;
 }
 
+// Hosts like Render have no writable repo to drop a PEM into, so the key can
+// also be supplied inline as an env var. \n escapes are accepted for
+// single-line env editors.
+function inlinePublicKey() {
+  const raw = process.env.TESLA_PUBLIC_KEY_PEM;
+  if (!raw || !raw.trim()) return null;
+  return raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
+}
+
+function hasPublicKey() {
+  return Boolean(inlinePublicKey() || resolvePublicKeyPath());
+}
+
 app.get('/.well-known/appspecific/com.tesla.3p.public-key.pem', (req, res) => {
+  const inline = inlinePublicKey();
+  if (inline) {
+    res.type('application/x-pem-file');
+    return res.send(inline.endsWith('\n') ? inline : inline + '\n');
+  }
+
   const pemPath = resolvePublicKeyPath();
   if (!pemPath) {
     return res
       .status(404)
       .type('text/plain')
       .send(
-        'Public key PEM not found. Copy server/keys/com.tesla.3p.public-key.pem.example to com.tesla.3p.public-key.pem (or set TESLA_PUBLIC_KEY_PATH).'
+        'Public key PEM not found. Set TESLA_PUBLIC_KEY_PEM, or copy server/keys/com.tesla.3p.public-key.pem.example to com.tesla.3p.public-key.pem (or set TESLA_PUBLIC_KEY_PATH).'
       );
   }
   res.type('application/x-pem-file');
@@ -87,8 +106,11 @@ app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
     hasToken: Boolean(process.env.TESLA_ACCESS_TOKEN),
+    canRefresh: canRefresh(),
     hasVehicleId: Boolean(process.env.TESLA_VEHICLE_ID),
-    publicKey: Boolean(resolvePublicKeyPath()),
+    publicKey: hasPublicKey(),
+    clientBuilt: fs.existsSync(path.resolve(__dirname, '../client/dist/index.html')),
+    env: process.env.NODE_ENV || 'development',
   });
 });
 
@@ -201,11 +223,17 @@ if (isProd && fs.existsSync(clientDist)) {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`[tesla-lyrics] server listening on http://localhost:${PORT}`);
+// Bind 0.0.0.0 so container platforms (Render, Fly, Docker) can route to it.
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[tesla-lyrics] server listening on port ${PORT}`);
   console.log(
-    `[tesla-lyrics] token=${process.env.TESLA_ACCESS_TOKEN ? 'set' : 'MISSING'} vehicle=${process.env.TESLA_VEHICLE_ID || 'MISSING'}`
+    `[tesla-lyrics] token=${process.env.TESLA_ACCESS_TOKEN ? 'set' : 'MISSING'} refresh=${canRefresh() ? 'set' : 'MISSING'} vehicle=${process.env.TESLA_VEHICLE_ID || 'MISSING'}`
   );
+  if (isProd && !fs.existsSync(clientDist)) {
+    console.warn(
+      `[tesla-lyrics] WARNING: ${clientDist} is missing — the build step did not run. Only /api routes will respond.`
+    );
+  }
   if (!isProd) {
     console.log(
       '[tesla-lyrics] Dev tip: run the Vite client (port 5173) which proxies /api → this server.'
