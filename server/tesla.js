@@ -6,6 +6,65 @@ const FLEET_BASE =
   process.env.TESLA_FLEET_BASE_URL ||
   'https://fleet-api.prd.na.vn.cloud.tesla.com';
 
+const AUTH_TOKEN_URL = 'https://auth.tesla.com/oauth2/v3/token';
+
+// Tesla access tokens expire after ~8 hours. A long-running deployment must
+// refresh them itself, so the token lives in memory and is re-minted from
+// TESLA_REFRESH_TOKEN on demand.
+let tokenCache = { accessToken: null, expiresAt: 0 };
+
+function canRefresh() {
+  return Boolean(process.env.TESLA_REFRESH_TOKEN && process.env.TESLA_CLIENT_ID);
+}
+
+async function refreshAccessToken() {
+  if (!canRefresh()) return null;
+
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: process.env.TESLA_CLIENT_ID,
+    refresh_token: process.env.TESLA_REFRESH_TOKEN,
+  });
+  if (process.env.TESLA_CLIENT_SECRET) {
+    body.set('client_secret', process.env.TESLA_CLIENT_SECRET);
+  }
+
+  const res = await axios.post(AUTH_TOKEN_URL, body.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (res.status >= 400 || !res.data || !res.data.access_token) {
+    const detail =
+      (res.data && (res.data.error_description || res.data.error)) || res.statusText;
+    console.error(`[tesla-lyrics] token refresh failed (${res.status}): ${detail}`);
+    return null;
+  }
+
+  const ttlMs = (Number(res.data.expires_in) || 8 * 3600) * 1000;
+  // Renew a minute early so an in-flight request never races the expiry.
+  tokenCache = { accessToken: res.data.access_token, expiresAt: Date.now() + ttlMs - 60000 };
+  console.log('[tesla-lyrics] access token refreshed');
+  return tokenCache.accessToken;
+}
+
+/**
+ * Current bearer token: cached refresh result, else the static env token.
+ * forceRefresh re-mints even if a cached/static token exists (used after a 401).
+ */
+async function getAccessToken({ forceRefresh = false } = {}) {
+  if (!forceRefresh) {
+    if (tokenCache.accessToken && Date.now() < tokenCache.expiresAt) {
+      return tokenCache.accessToken;
+    }
+    if (!tokenCache.accessToken && process.env.TESLA_ACCESS_TOKEN) {
+      return process.env.TESLA_ACCESS_TOKEN;
+    }
+  }
+  return (await refreshAccessToken()) || process.env.TESLA_ACCESS_TOKEN || null;
+}
+
 /**
  * Normalize a Tesla media time value to milliseconds.
  * Fleet media fields are often reported in seconds (sometimes fractional).
@@ -30,15 +89,15 @@ function toMs(value) {
  * Fetch vehicle_data and extract a clean media_info payload.
  */
 async function getMediaState() {
-  const token = process.env.TESLA_ACCESS_TOKEN;
   const vehicleId = process.env.TESLA_VEHICLE_ID;
+  let token = await getAccessToken();
 
   if (!token) {
     return {
       ok: false,
       error: 'missing_token',
       message:
-        'TESLA_ACCESS_TOKEN is not set. Complete OAuth and set the token in .env.',
+        'No Tesla token available. Set TESLA_ACCESS_TOKEN, or set TESLA_REFRESH_TOKEN + TESLA_CLIENT_ID so the server can mint one.',
       media: null,
     };
   }
@@ -54,21 +113,35 @@ async function getMediaState() {
 
   const url = `${FLEET_BASE}/api/1/vehicles/${vehicleId}/vehicle_data`;
 
-  try {
-    const res = await axios.get(url, {
+  const request = (bearer) =>
+    axios.get(url, {
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${bearer}`,
         'Content-Type': 'application/json',
       },
       timeout: 15000,
       validateStatus: () => true,
     });
 
+  try {
+    let res = await request(token);
+
+    // An expired token looks like a 401; mint a fresh one and retry once.
+    if ((res.status === 401 || res.status === 403) && canRefresh()) {
+      const refreshed = await getAccessToken({ forceRefresh: true });
+      if (refreshed && refreshed !== token) {
+        token = refreshed;
+        res = await request(token);
+      }
+    }
+
     if (res.status === 401 || res.status === 403) {
       return {
         ok: false,
         error: 'unauthorized',
-        message: 'Tesla API rejected the access token. Re-authenticate.',
+        message: canRefresh()
+          ? 'Tesla API rejected the token even after a refresh. The refresh token may be revoked or expired — re-run OAuth.'
+          : 'Tesla API rejected the access token. Re-authenticate (or set TESLA_REFRESH_TOKEN for automatic renewal).',
         status: res.status,
         media: null,
       };
@@ -148,5 +221,7 @@ async function getMediaState() {
 
 module.exports = {
   getMediaState,
+  getAccessToken,
+  canRefresh,
   toMs,
 };

@@ -1,0 +1,35 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# In Render: New + -> Blueprint -> pick this repo. Or create a Web Service
+# manually and copy buildCommand / startCommand below.
+services:
+  - type: web
+    name: tesla-lyrics
+    runtime: node
+    plan: free
+    # --include=dev is required: Render sets NODE_ENV=production, which would
+    # otherwise skip Vite/Tailwind and make the client build fail.
+    buildCommand: npm ci --include=dev && npm run install:all && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: TESLA_FLEET_BASE_URL
+        value: https://fleet-api.prd.na.vn.cloud.tesla.com
+      # Set the rest in the Render dashboard (Environment tab) — sync:false
+      # means "prompt me, don't store in git".
+      - key: TESLA_CLIENT_ID
+        sync: false
+      - key: TESLA_CLIENT_SECRET
+        sync: false
+      - key: TESLA_REDIRECT_URI
+        sync: false
+      - key: TESLA_ACCESS_TOKEN
+        sync: false
+      - key: TESLA_REFRESH_TOKEN
+        sync: false
+      - key: TESLA_VEHICLE_ID
+        sync: false
+      - key: TESLA_PUBLIC_KEY_PEM
+        sync: false
