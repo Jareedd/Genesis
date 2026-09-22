@@ -11,7 +11,7 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-const { getMediaState, canRefresh, registerPartnerDomain, partnerDomain } = require('./tesla');
+const { getMediaState, canRefresh, registerPartnerDomain, partnerDomain, listVehicles } = require('./tesla');
 const { fetchLyrics } = require('./lyrics');
 
 const app = express();
@@ -224,6 +224,55 @@ code,pre{background:#222;padding:.5rem;display:block;overflow:auto;word-break:br
       .type('text/html')
       .send(`<h1>Token exchange failed</h1><pre>${detail}</pre>`);
   }
+});
+
+// --- Vehicle picker: the value TESLA_VEHICLE_ID expects ---
+// Renders a table in a browser, returns JSON to anything else.
+app.get('/api/vehicles', async (req, res) => {
+  let result;
+  try {
+    result = await listVehicles();
+  } catch (err) {
+    result = { ok: false, error: 'server_error', message: err.message, vehicles: [] };
+  }
+
+  if (!req.accepts('html')) {
+    return res.status(result.ok ? 200 : 400).json(result);
+  }
+
+  const rows = result.vehicles
+    .map(
+      (v) => `<tr>
+  <td><code class="id">${v.id}</code></td>
+  <td>${v.display_name || '<em>unnamed</em>'}</td>
+  <td>${v.vin || ''}</td>
+  <td>${v.state || ''}</td>
+</tr>`
+    )
+    .join('\n');
+
+  res.type('text/html').send(`<!DOCTYPE html>
+<html><head><title>Your vehicles</title>
+<style>body{font-family:system-ui;background:#111;color:#eee;padding:2rem;max-width:760px;margin:auto;line-height:1.5}
+table{border-collapse:collapse;width:100%;margin:1rem 0}
+th,td{text-align:left;padding:.5rem;border-bottom:1px solid #333}
+th{color:#9ca3af;font-size:.85rem;text-transform:uppercase}
+code{background:#222;padding:.15rem .4rem;border-radius:3px}
+.id{color:#4ade80;font-weight:600}
+.warn{color:#fbbf24}</style></head>
+<body>
+<h1>Your vehicles</h1>
+${
+  result.ok
+    ? `<p>Copy the green <strong>id</strong> into <code>TESLA_VEHICLE_ID</code> in Render.</p>
+<table><tr><th>id</th><th>name</th><th>vin</th><th>state</th></tr>
+${rows || '<tr><td colspan="4"><em>No vehicles on this account.</em></td></tr>'}
+</table>
+<p class="warn">If state is <code>asleep</code>, wake the car in the Tesla app before expecting media data.</p>`
+    : `<p class="warn">${result.message}</p>
+<p><a href="/oauth/start" style="color:#60a5fa">Start OAuth</a></p>`
+}
+</body></html>`);
 });
 
 // --- One-time Tesla partner domain registration ---

@@ -327,8 +327,66 @@ async function registerPartnerDomain() {
   return { ok: true, domain, status: res.status, response: res.data };
 }
 
+
+/**
+ * List the vehicles on the authenticated account, trimmed to the fields
+ * needed to identify one. TESLA_VEHICLE_ID expects the `id` value.
+ */
+async function listVehicles() {
+  const token = await getAccessToken();
+  if (!token) {
+    return {
+      ok: false,
+      error: 'missing_token',
+      message: 'No Tesla token available. Complete /oauth/start first.',
+      vehicles: [],
+    };
+  }
+
+  const res = await axios.get(`${FLEET_BASE}/api/1/vehicles`, {
+    headers: { Authorization: `Bearer ${token}` },
+    timeout: 15000,
+    validateStatus: () => true,
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    return {
+      ok: false,
+      error: 'unauthorized',
+      status: res.status,
+      message: 'Tesla rejected the token. Re-run /oauth/start.',
+      vehicles: [],
+    };
+  }
+
+  if (res.status >= 400) {
+    const detail =
+      (res.data && (res.data.error_description || res.data.error)) || res.statusText;
+    return {
+      ok: false,
+      error: 'tesla_api_error',
+      status: res.status,
+      message: `Tesla API error (${res.status}): ${detail}`,
+      vehicles: [],
+    };
+  }
+
+  const list = (res.data && res.data.response) || [];
+  return {
+    ok: true,
+    vehicles: list.map((v) => ({
+      id: String(v.id),
+      vehicle_id: v.vehicle_id != null ? String(v.vehicle_id) : null,
+      vin: v.vin || null,
+      display_name: v.display_name || null,
+      state: v.state || null,
+    })),
+  };
+}
+
 module.exports = {
   getMediaState,
+  listVehicles,
   getPartnerToken,
   registerPartnerDomain,
   partnerDomain,
