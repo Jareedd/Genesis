@@ -4,6 +4,22 @@ import LyricsView from './components/LyricsView.jsx';
 
 const POLL_MS = 5000;
 
+const DEMO_LINES = [
+  { timeMs: 0, text: 'Night highway, cabin glow' },
+  { timeMs: 3200, text: 'Bass under the glass roof' },
+  { timeMs: 6400, text: 'Every line lights with the beat' },
+  { timeMs: 9600, text: 'Teslyr keeps the words in view' },
+  { timeMs: 12800, text: 'Crimson pulse on every verse' },
+  { timeMs: 16000, text: 'Drive on — stay in sync' },
+  { timeMs: 19200, text: 'Nothing between you and the song' },
+  { timeMs: 22400, text: 'Just the road and the lyric' },
+];
+
+function isDemoMode() {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).has('demo');
+}
+
 function trackKey(media) {
   if (!media) return '';
   return `${media.title || ''}|${media.artist || ''}`;
@@ -15,8 +31,8 @@ export default function App() {
   const [lyrics, setLyrics] = useState({ lines: [], plainLyrics: null, ok: false });
   const [lyricsStatus, setLyricsStatus] = useState('');
   const [currentPositionMs, setCurrentPositionMs] = useState(0);
+  const demo = useRef(isDemoMode()).current;
 
-  // Interpolation refs: anchor elapsed from last successful poll + wall clock
   const anchorElapsedMs = useRef(0);
   const anchorWallMs = useRef(Date.now());
   const isPlayingRef = useRef(false);
@@ -31,7 +47,6 @@ export default function App() {
         message: payload.message || payload.error || 'No media',
         error: payload.error,
       });
-      // Keep last media visible if we had one; still stop interpolating
       isPlayingRef.current = false;
       return;
     }
@@ -47,8 +62,33 @@ export default function App() {
     setCurrentPositionMs(anchorElapsedMs.current);
   }, []);
 
+  // Demo preview — no Tesla token required (?demo=1)
+  useEffect(() => {
+    if (!demo) return;
+    const durationMs = 28000;
+    setMedia({
+      title: 'Midnight Autopilot',
+      artist: 'Teslyr Demo',
+      album: 'Cabin Sessions',
+      durationMs,
+      elapsedMs: 0,
+      playbackStatus: 'Playing',
+      isPlaying: true,
+      source: 'demo',
+    });
+    setStatus({ ok: true, message: 'Playing' });
+    setLyrics({ lines: DEMO_LINES, plainLyrics: null, ok: true });
+    setLyricsStatus('');
+    anchorElapsedMs.current = 0;
+    anchorWallMs.current = Date.now();
+    isPlayingRef.current = true;
+    durationMsRef.current = durationMs;
+    lastTrackKey.current = 'Midnight Autopilot|Teslyr Demo';
+  }, [demo]);
+
   // Poll Tesla media state every 5s
   useEffect(() => {
+    if (demo) return undefined;
     let cancelled = false;
 
     async function poll() {
@@ -74,7 +114,7 @@ export default function App() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [applyMediaPayload]);
+  }, [applyMediaPayload, demo]);
 
   // rAF interpolate position while Playing
   useEffect(() => {
@@ -83,17 +123,27 @@ export default function App() {
         const delta = Date.now() - anchorWallMs.current;
         let next = anchorElapsedMs.current + delta;
         const dur = durationMsRef.current;
-        if (dur > 0 && next > dur) next = dur;
+        if (dur > 0 && next > dur) {
+          if (demo) {
+            // Loop demo so visual QA / cabin preview never freezes on the last line
+            anchorElapsedMs.current = 0;
+            anchorWallMs.current = Date.now();
+            next = 0;
+          } else {
+            next = dur;
+          }
+        }
         setCurrentPositionMs(next);
       }
       rafRef.current = requestAnimationFrame(tick);
     }
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, []);
+  }, [demo]);
 
   // Fetch lyrics when title/artist change
   useEffect(() => {
+    if (demo) return undefined;
     const key = trackKey(media);
     if (!key || key === '|' || key === lastTrackKey.current) return;
     if (!media?.title || !media?.artist) {
@@ -149,17 +199,23 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [media]);
+  }, [media, demo]);
+
+  const hasTrack = Boolean(media?.title);
 
   return (
-    <div className="flex h-full w-full flex-col bg-black text-white">
+    <div className="teslyr-stage relative flex h-full w-full flex-col text-white">
+      <div className="teslyr-grid pointer-events-none absolute inset-0" aria-hidden />
+
       <NowPlaying media={media} status={status} positionMs={currentPositionMs} />
-      <div className="min-h-0 flex-1">
+
+      <div className="relative min-h-0 flex-1">
         <LyricsView
           lines={lyrics.lines}
           plainLyrics={lyrics.plainLyrics}
           currentPositionMs={currentPositionMs}
           statusMessage={lyricsStatus}
+          showBrandHero={!hasTrack && !lyrics.lines.length}
         />
       </div>
     </div>

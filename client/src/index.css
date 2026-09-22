@@ -2,12 +2,56 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --teslyr-void: #050505;
+  --teslyr-ink: #0c0c0c;
+  --teslyr-crimson: #e10600;
+  --teslyr-ember: #ff3b30;
+  --teslyr-live: #2ee66b;
+  --teslyr-mute: #8a8a8a;
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
 }
 
 body {
-  @apply bg-black text-white antialiased;
-  /* Tesla in-car browser is happier without overscroll bounce */
+  @apply font-sans text-white antialiased;
+  background: var(--teslyr-void);
   overscroll-behavior: none;
+}
+
+/* Atmospheric stage — Tesla-browser safe (no blur filters) */
+.teslyr-stage {
+  background:
+    radial-gradient(ellipse 90% 55% at 50% 115%, rgba(225, 6, 0, 0.22), transparent 55%),
+    radial-gradient(ellipse 70% 40% at 80% -10%, rgba(255, 59, 48, 0.08), transparent 50%),
+    radial-gradient(ellipse 50% 35% at 10% 0%, rgba(255, 255, 255, 0.04), transparent 45%),
+    linear-gradient(180deg, #0a0a0a 0%, #050505 45%, #080808 100%);
+}
+
+.teslyr-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 45%, black 20%, transparent 75%);
+}
+
+.lyric-line {
+  transition:
+    color 0.35s ease,
+    opacity 0.35s ease,
+    transform 0.45s ease,
+    font-size 0.35s ease;
+  will-change: transform, opacity;
+}
+
+.lyric-line-active {
+  text-shadow: 0 0 28px rgba(225, 6, 0, 0.35);
+}
+
+.progress-fill {
+  background: linear-gradient(90deg, #e10600, #ff3b30);
+  box-shadow: 0 0 12px rgba(225, 6, 0, 0.45);
 }
