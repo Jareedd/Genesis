@@ -66,9 +66,12 @@ This server maps that path to a local file:
 
 1. Generate a real key pair for production (do **not** use the dummy example in production):
 
+   Tesla requires an **EC key on the prime256v1 (NIST P-256) curve**. An RSA
+   key is rejected during partner registration.
+
    ```bash
-   openssl genrsa -out private-key.pem 2048
-   openssl rsa -in private-key.pem -pubout -out server/keys/com.tesla.3p.public-key.pem
+   openssl ecparam -name prime256v1 -genkey -noout -out private-key.pem
+   openssl ec -in private-key.pem -pubout -out server/keys/com.tesla.3p.public-key.pem
    ```
 
 2. Keep `private-key.pem` **offline / secret**. Only the **public** PEM is served.
@@ -84,7 +87,7 @@ This server maps that path to a local file:
 
    Or set `TESLA_PUBLIC_KEY_PATH` in `.env`.
 
-> **Note:** The included `.example` key is a randomly generated RSA public key for **local testing of the well-known route only**. It is not registered with Tesla and will not satisfy partner onboarding by itself.
+> **Note:** The included `.example` key is a randomly generated **RSA** public key for **local testing of the well-known route only**. Tesla requires an EC/prime256v1 key, so this example is the wrong type by design — it exercises the route but will never pass partner onboarding. Generate your own with the commands above.
 
 ### 3. Register domain + virtual key
 

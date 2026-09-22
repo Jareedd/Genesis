@@ -11,7 +11,7 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-const { getMediaState, canRefresh } = require('./tesla');
+const { getMediaState, canRefresh, registerPartnerDomain, partnerDomain } = require('./tesla');
 const { fetchLyrics } = require('./lyrics');
 
 const app = express();
@@ -208,6 +208,56 @@ code,pre{background:#222;padding:.5rem;display:block;overflow:auto;word-break:br
       .status(502)
       .type('text/html')
       .send(`<h1>Token exchange failed</h1><pre>${detail}</pre>`);
+  }
+});
+
+// --- One-time Tesla partner domain registration ---
+// Tesla will not serve vehicle data until the app's domain is registered.
+// GET renders a confirmation page; the POST behind it does the work, so a
+// crawler or prefetch can never trigger the call.
+app.get('/api/partner/register', (req, res) => {
+  const domain = partnerDomain();
+  res.type('text/html').send(`<!DOCTYPE html>
+<html><head><title>Register Tesla partner domain</title>
+<style>body{font-family:system-ui;background:#111;color:#eee;padding:2rem;max-width:640px;margin:auto;line-height:1.5}
+button{background:#e11d48;color:#fff;border:0;padding:.75rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer}
+code{background:#222;padding:.15rem .4rem;border-radius:3px}
+pre{background:#222;padding:1rem;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.warn{color:#fbbf24}</style></head>
+<body>
+<h1>Register partner domain</h1>
+${domain
+  ? `<p>This registers <code>${domain}</code> with Tesla, using your client id and secret.</p>
+     <p class="warn">Before clicking: confirm this URL loads publicly and shows your key —<br>
+     <code>https://${domain}/.well-known/appspecific/com.tesla.3p.public-key.pem</code></p>
+     <p><button id="go">Register ${domain}</button></p>`
+  : `<p class="warn">No domain configured. Set <code>TESLA_PARTNER_DOMAIN</code>, or set
+     <code>TESLA_REDIRECT_URI</code> to your public https URL.</p>`}
+<pre id="out" hidden></pre>
+<script>
+const btn = document.getElementById('go');
+if (btn) btn.onclick = async () => {
+  btn.disabled = true; btn.textContent = 'Registering…';
+  const out = document.getElementById('out');
+  out.hidden = false; out.textContent = 'Working…';
+  try {
+    const r = await fetch('/api/partner/register', { method: 'POST' });
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch (e) {
+    out.textContent = 'Request failed: ' + e.message;
+  }
+  btn.disabled = false; btn.textContent = 'Try again';
+};
+</script>
+</body></html>`);
+});
+
+app.post('/api/partner/register', async (req, res) => {
+  try {
+    const result = await registerPartnerDomain();
+    res.status(result.ok ? 200 : 400).json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'server_error', message: err.message });
   }
 });
 

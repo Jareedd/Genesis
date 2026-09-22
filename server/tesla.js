@@ -219,8 +219,119 @@ async function getMediaState() {
   }
 }
 
+
+/**
+ * Partner (client_credentials) token. Distinct from the user token: it
+ * authenticates the application itself, not a vehicle owner, and is what
+ * /api/1/partner_accounts requires.
+ */
+async function getPartnerToken() {
+  const clientId = process.env.TESLA_CLIENT_ID;
+  const clientSecret = process.env.TESLA_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    const missing = [
+      !clientId && 'TESLA_CLIENT_ID',
+      !clientSecret && 'TESLA_CLIENT_SECRET',
+    ].filter(Boolean);
+    throw new Error(`Missing ${missing.join(' and ')}.`);
+  }
+
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: process.env.TESLA_PARTNER_SCOPE || 'openid vehicle_device_data',
+    audience: FLEET_BASE,
+  });
+
+  const res = await axios.post(AUTH_TOKEN_URL, body.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (res.status >= 400 || !res.data || !res.data.access_token) {
+    const detail =
+      (res.data && (res.data.error_description || res.data.error)) || res.statusText;
+    throw new Error(`Partner token request failed (${res.status}): ${detail}`);
+  }
+
+  return res.data.access_token;
+}
+
+/**
+ * The domain Tesla should associate with this app. Defaults to the host of
+ * TESLA_REDIRECT_URI so there is one less env var to keep in sync.
+ */
+function partnerDomain() {
+  if (process.env.TESLA_PARTNER_DOMAIN) {
+    return process.env.TESLA_PARTNER_DOMAIN.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  }
+  const redirect = process.env.TESLA_REDIRECT_URI;
+  if (!redirect) return null;
+  try {
+    return new URL(redirect).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One-time registration of this app's domain with Tesla. Safe to repeat —
+ * Tesla treats a re-register of the same domain as a no-op update.
+ */
+async function registerPartnerDomain() {
+  const domain = partnerDomain();
+  if (!domain) {
+    return {
+      ok: false,
+      error: 'missing_domain',
+      message:
+        'Could not determine the domain. Set TESLA_PARTNER_DOMAIN, or set TESLA_REDIRECT_URI to your public https URL.',
+    };
+  }
+
+  const token = await getPartnerToken();
+
+  const res = await axios.post(
+    `${FLEET_BASE}/api/1/partner_accounts`,
+    { domain },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 20000,
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status >= 400) {
+    const detail =
+      (res.data && (res.data.error_description || res.data.error || JSON.stringify(res.data))) ||
+      res.statusText;
+    return {
+      ok: false,
+      error: 'registration_failed',
+      domain,
+      status: res.status,
+      message: `Tesla rejected the registration (${res.status}): ${detail}`,
+      hint:
+        res.status === 412 || res.status === 403
+          ? `Tesla must be able to fetch https://${domain}/.well-known/appspecific/com.tesla.3p.public-key.pem — check that URL loads publicly first.`
+          : undefined,
+    };
+  }
+
+  return { ok: true, domain, status: res.status, response: res.data };
+}
+
 module.exports = {
   getMediaState,
+  getPartnerToken,
+  registerPartnerDomain,
+  partnerDomain,
   getAccessToken,
   canRefresh,
   toMs,
