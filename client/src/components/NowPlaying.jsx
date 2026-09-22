@@ -27,8 +27,10 @@ export default function NowPlaying({ media, status, positionMs }) {
   const artist = media?.artist || 'Waiting for media';
   const album = media?.album || '';
   const durationMs = media?.durationMs || 0;
-  const playback = media?.playbackStatus || status?.message || '';
   const connected = Boolean(status?.ok);
+  const playback = media?.playbackStatus
+    || (connected ? status?.message : friendlyStatus(status))
+    || 'Offline';
 
   const progress =
     durationMs > 0 ? Math.min(100, (positionMs / durationMs) * 100) : 0;
@@ -70,12 +72,6 @@ export default function NowPlaying({ media, status, positionMs }) {
             <p className="mt-0.5 truncate text-sm text-teslyr-mute">{album}</p>
           ) : null}
         </div>
-
-        {!connected && status?.error ? (
-          <div className="max-w-[11rem] shrink-0 text-right text-xs leading-snug text-teslyr-mute">
-            {friendlyStatus(status)}
-          </div>
-        ) : null}
       </div>
 
       <div className="mt-4 flex items-center gap-3 text-xs text-teslyr-mute">
