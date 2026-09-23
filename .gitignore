@@ -5,8 +5,12 @@ node_modules/
 .env
 .env.local
 .env.*.local
+server/.env
 private-key.pem
 server/keys/com.tesla.3p.public-key.pem
+# rotated Tesla refresh token, persisted at runtime
+.token-store.json
+server/.token-store.json
 
 # logs / os
 npm-debug.log*

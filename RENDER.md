@@ -33,12 +33,38 @@ timeout".
 
 ---
 
+## 1a. Owner login & setup routes
+
+The app is private: every route that touches the car — `/api/media_state` and
+the setup helpers — sits behind an **owner login**.
+
+- Set `OWNER_PASSWORD` (Environment tab). Until you do, the client shows a
+  locked screen, `/api/media_state` returns `503 auth_not_configured`, and the
+  server never calls Tesla.
+- Open the app, enter the password once; the session cookie keeps the cabin
+  browser logged in (~30 days).
+- The **setup routes** (`/oauth/start`, `/oauth/callback`, `/api/vehicles`,
+  `/api/partner/register`) are **disabled by default**. Set
+  `ENABLE_SETUP_ROUTES=1` while onboarding (getting tokens, finding the vehicle
+  id, registering the domain), then remove it. They also require you to be
+  logged in.
+
+`/api/health` reports `authConfigured` and `setupRoutes` so you can confirm the
+current state.
+
+---
+
 ## 2. Environment variables
 
 Set these in the service's **Environment** tab:
 
 | Var | Required | Notes |
 |---|---|---|
+| `OWNER_PASSWORD` | **yes** | gates all vehicle data — without it the app stays locked (§1a) |
+| `OWNER_USERNAME` | no | adds a username field to the login form |
+| `SESSION_SECRET` | no | session-cookie signing key(s); derived from `OWNER_PASSWORD` if unset |
+| `ENABLE_SETUP_ROUTES` | no | set to `1` only while onboarding to expose `/oauth/*`, `/api/vehicles`, `/api/partner/register` (§1a) |
+| `TESLA_TOKEN_STORE` | no | path for the rotated refresh token; point at a mounted disk to survive restarts |
 | `TESLA_VEHICLE_ID` | yes | numeric id from `GET /api/1/vehicles` |
 | `TESLA_REFRESH_TOKEN` | yes (prod) | so the server renews its own token — see §3 |
 | `TESLA_CLIENT_ID` | yes (prod) | needed for the refresh call |
@@ -68,7 +94,8 @@ access token on startup, when the cached one ages out, and once more on any
 To get a refresh token:
 
 1. Deploy first, so the service has a public HTTPS URL
-2. Set `TESLA_CLIENT_ID`, `TESLA_CLIENT_SECRET`, `TESLA_REDIRECT_URI`
+2. Set `TESLA_CLIENT_ID`, `TESLA_CLIENT_SECRET`, `TESLA_REDIRECT_URI`, and
+   `ENABLE_SETUP_ROUTES=1` (see §1a), then log in
 3. Visit `https://<your-service>.onrender.com/oauth/start`
 4. The callback page prints `access_token` and `refresh_token` **once** —
    copy the refresh token into the Environment tab and redeploy
@@ -142,9 +169,10 @@ first. The registration uses the `client_credentials` grant, so
 
 ## 6. Find your vehicle id
 
-After OAuth, open `https://<your-domain>/api/vehicles`. It lists the cars on
-the account; copy the `id` column into `TESLA_VEHICLE_ID`. (The VIN and
-`vehicle_id` are shown too, but `id` is the one this app wants.)
+After OAuth (with `ENABLE_SETUP_ROUTES=1` and logged in), open
+`https://<your-domain>/api/vehicles`. It lists the cars on the account; copy
+the `id` column into `TESLA_VEHICLE_ID`. (The VIN and `vehicle_id` are shown
+too, but `id` is the one this app wants.)
 
 ---
 
