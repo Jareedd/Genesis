@@ -3,6 +3,16 @@ import NowPlaying from './components/NowPlaying.jsx';
 import LyricsView from './components/LyricsView.jsx';
 
 const POLL_MS = 5000;
+// Poll harder around a track change (that boundary is what users notice) and
+// back off when nothing is playing, so the adaptive schedule costs fewer Fleet
+// API requests overall than a flat 5s loop.
+const FAST_POLL_MS = 1500;
+const PAUSED_POLL_MS = 6000;
+const ERROR_POLL_MS = 15000;
+const TRACK_END_WINDOW_MS = 4000;
+// A vehicle_data call takes ~1s warm but 10s+ when the car is waking. Cap it so
+// one slow request can't stall the loop.
+const REQUEST_TIMEOUT_MS = 12000;
 
 // Manual sync trim. Tesla reports elapsed time at whole-second resolution and
 // the cabin audio path adds its own latency, so a residual offset survives the
@@ -67,6 +77,7 @@ export default function App() {
   const [lyricsStatus, setLyricsStatus] = useState('');
   const [currentPositionMs, setCurrentPositionMs] = useState(0);
   const [offsetMs, setOffsetMs] = useState(loadOffset);
+  const [awaitingNext, setAwaitingNext] = useState(false);
   const demo = useRef(isDemoMode()).current;
 
   const anchorElapsedMs = useRef(0);
@@ -75,6 +86,9 @@ export default function App() {
   const durationMsRef = useRef(0);
   const rafRef = useRef(0);
   const lastTrackKey = useRef('');
+  const lastPollOkRef = useRef(true);
+  const endedRef = useRef(false);
+  const lastAnchoredKey = useRef('');
 
   useEffect(() => {
     try {
@@ -86,6 +100,7 @@ export default function App() {
 
   const applyMediaPayload = useCallback((payload, rttMs = 0) => {
     if (!payload.ok || !payload.media) {
+      lastPollOkRef.current = false;
       setStatus({
         ok: false,
         message: payload.message || payload.error || 'No media',
@@ -95,7 +110,18 @@ export default function App() {
       return;
     }
 
+    lastPollOkRef.current = true;
     const m = payload.media;
+
+    // A new track restarts the clock. Without this the previous song's
+    // extrapolated position survives into the new one, so the bar opens full
+    // and the last line of the old lyrics shows as active.
+    if (trackKey(m) !== lastAnchoredKey.current) {
+      lastAnchoredKey.current = trackKey(m);
+      endedRef.current = false;
+      setAwaitingNext(false);
+    }
+
     setMedia(m);
     setStatus({ ok: true, message: m.playbackStatus || 'OK' });
 
@@ -133,34 +159,63 @@ export default function App() {
     lastTrackKey.current = 'Midnight Autopilot|Teslyr Demo';
   }, [demo]);
 
-  // Poll Tesla media state every 5s
+  // Poll Tesla media state on a self-scheduling loop. setInterval would stack
+  // requests whenever a call outran the interval, and those replies land out of
+  // order — an older elapsed value overwriting a newer one drags the position
+  // backwards. Scheduling the next poll only after the last one settles makes
+  // overlap impossible.
   useEffect(() => {
     if (demo) return undefined;
     let cancelled = false;
+    let timer = 0;
+
+    function nextDelay() {
+      // Asleep or unreachable: back right off. Paused is different — someone is
+      // sitting there and will hit play, so keep that responsive.
+      if (!lastPollOkRef.current) return ERROR_POLL_MS;
+      if (!isPlayingRef.current) return PAUSED_POLL_MS;
+      const dur = durationMsRef.current;
+      if (dur > 0) {
+        const position =
+          anchorElapsedMs.current + (Date.now() - anchorWallMs.current);
+        if (dur - position <= TRACK_END_WINDOW_MS) return FAST_POLL_MS;
+      }
+      return POLL_MS;
+    }
 
     async function poll() {
       const startedAt = Date.now();
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
       try {
-        const res = await fetch('/api/media_state');
+        const res = await fetch('/api/media_state', { signal: controller.signal });
         const data = await res.json();
         if (!cancelled) applyMediaPayload(data, Date.now() - startedAt);
       } catch (err) {
         if (!cancelled) {
+          lastPollOkRef.current = false;
           setStatus({
             ok: false,
-            message: `Media poll failed: ${err.message}`,
+            message:
+              err.name === 'AbortError'
+                ? 'Vehicle slow to respond…'
+                : `Media poll failed: ${err.message}`,
             error: 'network_error',
           });
           isPlayingRef.current = false;
         }
+      } finally {
+        clearTimeout(abortTimer);
       }
+
+      if (!cancelled) timer = setTimeout(poll, nextDelay());
     }
 
     poll();
-    const id = setInterval(poll, POLL_MS);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      clearTimeout(timer);
     };
   }, [applyMediaPayload, demo]);
 
@@ -179,6 +234,12 @@ export default function App() {
             next = 0;
           } else {
             next = dur;
+            // Past the end with no new track yet: hand over to a transitional
+            // state rather than holding the final line lit under a full bar.
+            if (!endedRef.current) {
+              endedRef.current = true;
+              setAwaitingNext(true);
+            }
           }
         }
         setCurrentPositionMs(next);
@@ -238,6 +299,9 @@ export default function App() {
         }
       } catch (err) {
         if (!cancelled) {
+          // Release the claim so the next poll retries instead of leaving the
+          // track permanently lyric-less after one transient failure.
+          lastTrackKey.current = '';
           setLyrics({ lines: [], plainLyrics: null, ok: false });
           setLyricsStatus(`Lyrics error: ${err.message}`);
         }
@@ -263,10 +327,10 @@ export default function App() {
 
       <div className="relative min-h-0 flex-1">
         <LyricsView
-          lines={lyrics.lines}
-          plainLyrics={lyrics.plainLyrics}
+          lines={awaitingNext ? [] : lyrics.lines}
+          plainLyrics={awaitingNext ? null : lyrics.plainLyrics}
           currentPositionMs={currentPositionMs + offsetMs}
-          statusMessage={lyricsStatus}
+          statusMessage={awaitingNext ? 'Up next…' : lyricsStatus}
           showBrandHero={!hasTrack && !lyrics.lines.length}
         />
       </div>
