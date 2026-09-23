@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import NowPlaying from './components/NowPlaying.jsx';
 import LyricsView from './components/LyricsView.jsx';
+import OwnerGate from './components/OwnerGate.jsx';
 
 const POLL_MS = 5000;
 // Poll harder around a track change (that boundary is what users notice) and
@@ -85,6 +86,13 @@ export default function App() {
   const [awaitingNext, setAwaitingNext] = useState(false);
   const trackId = trackKey(media);
   const demo = useRef(isDemoMode()).current;
+  // Owner-login gate. Demo mode is a token-free preview, so it skips the gate.
+  const [auth, setAuth] = useState({
+    checked: false,
+    configured: false,
+    authenticated: false,
+    usernameRequired: false,
+  });
 
   const anchorElapsedMs = useRef(0);
   const anchorWallMs = useRef(Date.now());
@@ -188,6 +196,33 @@ export default function App() {
     lastTrackKey.current = 'Midnight Autopilot|Teslyr Demo';
   }, [demo]);
 
+  // Check the owner session once on load (skipped in demo).
+  useEffect(() => {
+    if (demo) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/session');
+        const data = await res.json();
+        if (!cancelled) {
+          setAuth({
+            checked: true,
+            configured: !!data.configured,
+            authenticated: !!data.authenticated,
+            usernameRequired: !!data.usernameRequired,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setAuth((a) => ({ ...a, checked: true }));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [demo]);
+
   // Poll Tesla media state on a self-scheduling loop. setInterval would stack
   // requests whenever a call outran the interval, and those replies land out of
   // order — an older elapsed value overwriting a newer one drags the position
@@ -195,6 +230,7 @@ export default function App() {
   // overlap impossible.
   useEffect(() => {
     if (demo) return undefined;
+    if (!auth.authenticated) return undefined;
     let cancelled = false;
     let timer = 0;
 
@@ -219,6 +255,19 @@ export default function App() {
 
       try {
         const res = await fetch('/api/media_state', { signal: controller.signal });
+        // Session expired or the server was locked/reconfigured: drop back to
+        // the gate instead of looping on rejected requests.
+        if (res.status === 401 || res.status === 503) {
+          if (!cancelled) {
+            setAuth((a) => ({
+              ...a,
+              checked: true,
+              authenticated: false,
+              configured: res.status !== 503,
+            }));
+          }
+          return;
+        }
         const data = await res.json();
         if (!cancelled) applyMediaPayload(data, Date.now() - startedAt);
       } catch (err) {
@@ -246,7 +295,7 @@ export default function App() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [applyMediaPayload, demo]);
+  }, [applyMediaPayload, demo, auth.authenticated]);
 
   // rAF interpolate position while Playing
   useEffect(() => {
@@ -372,6 +421,8 @@ export default function App() {
 
   const hasTrack = Boolean(media?.title);
   const trackBg = trackBackground(media);
+  const checking = !demo && !auth.checked;
+  const gated = !demo && auth.checked && !auth.authenticated;
 
   return (
     <div
@@ -380,19 +431,40 @@ export default function App() {
     >
       <div className="teslyr-grid pointer-events-none absolute inset-0" aria-hidden />
 
-      <NowPlaying media={media} status={status} positionMs={currentPositionMs} />
-
-      <div className="relative min-h-0 flex-1">
-        <LyricsView
-          lines={awaitingNext ? [] : lyrics.lines}
-          plainLyrics={awaitingNext ? null : lyrics.plainLyrics}
-          currentPositionMs={currentPositionMs + offsetMs}
-          statusMessage={awaitingNext ? 'Up next…' : lyricsStatus}
-          showBrandHero={!hasTrack && !lyrics.lines.length}
+      {checking ? (
+        <div className="relative flex h-full items-center justify-center">
+          <p className="text-lg text-teslyr-mute">Connecting…</p>
+        </div>
+      ) : gated ? (
+        <OwnerGate
+          configured={auth.configured}
+          usernameRequired={auth.usernameRequired}
+          onAuthenticated={() =>
+            setAuth((a) => ({
+              ...a,
+              checked: true,
+              configured: true,
+              authenticated: true,
+            }))
+          }
         />
-      </div>
+      ) : (
+        <>
+          <NowPlaying media={media} status={status} positionMs={currentPositionMs} />
 
-      {hasTrack && <SyncControls offsetMs={offsetMs} onChange={setOffsetMs} />}
+          <div className="relative min-h-0 flex-1">
+            <LyricsView
+              lines={awaitingNext ? [] : lyrics.lines}
+              plainLyrics={awaitingNext ? null : lyrics.plainLyrics}
+              currentPositionMs={currentPositionMs + offsetMs}
+              statusMessage={awaitingNext ? 'Up next…' : lyricsStatus}
+              showBrandHero={!hasTrack && !lyrics.lines.length}
+            />
+          </div>
+
+          {hasTrack && <SyncControls offsetMs={offsetMs} onChange={setOffsetMs} />}
+        </>
+      )}
     </div>
   );
 }
