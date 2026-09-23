@@ -13,6 +13,11 @@ const TRACK_END_WINDOW_MS = 4000;
 // A vehicle_data call takes ~1s warm but 10s+ when the car is waking. Cap it so
 // one slow request can't stall the loop.
 const REQUEST_TIMEOUT_MS = 12000;
+const LYRICS_TIMEOUT_MS = 8000;
+const LYRICS_RETRY_MS = 1500;
+const LYRICS_MAX_ATTEMPTS = 3;
+// Never let the end-of-track handover become a dead end.
+const AWAITING_MAX_MS = 10000;
 
 // Manual sync trim. Tesla reports elapsed time at whole-second resolution and
 // the cabin audio path adds its own latency, so a residual offset survives the
@@ -78,6 +83,7 @@ export default function App() {
   const [currentPositionMs, setCurrentPositionMs] = useState(0);
   const [offsetMs, setOffsetMs] = useState(loadOffset);
   const [awaitingNext, setAwaitingNext] = useState(false);
+  const trackId = trackKey(media);
   const demo = useRef(isDemoMode()).current;
 
   const anchorElapsedMs = useRef(0);
@@ -89,6 +95,11 @@ export default function App() {
   const lastPollOkRef = useRef(true);
   const endedRef = useRef(false);
   const lastAnchoredKey = useRef('');
+  const mediaRef = useRef(null);
+  const prevElapsedRef = useRef(-1);
+  // Latches once the handover has been given up on, so the rAF loop below
+  // cannot immediately re-enter it. Cleared only by an actual track change.
+  const handoverExpiredRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -119,9 +130,27 @@ export default function App() {
     if (trackKey(m) !== lastAnchoredKey.current) {
       lastAnchoredKey.current = trackKey(m);
       endedRef.current = false;
+      handoverExpiredRef.current = false;
+      prevElapsedRef.current = -1;
       setAwaitingNext(false);
     }
 
+    // Recover from the end-of-track handover when the same track keeps playing
+    // (Tesla's reported duration can be short or plain wrong), otherwise the
+    // transitional state sticks until the track changes.
+    const dur = Number(m.durationMs) || 0;
+    const el = Number(m.elapsedMs) || 0;
+    // Elapsed still climbing means the track is genuinely still playing, even
+    // if it has run past the duration Tesla reported — that reading is not
+    // always right, and trusting it alone strands the handover state.
+    const advanced = el > prevElapsedRef.current + 250;
+    prevElapsedRef.current = el;
+    if (dur === 0 || el < dur - 1500 || advanced) {
+      endedRef.current = false;
+      setAwaitingNext(false);
+    }
+
+    mediaRef.current = m;
     setMedia(m);
     setStatus({ ok: true, message: m.playbackStatus || 'OK' });
 
@@ -236,7 +265,7 @@ export default function App() {
             next = dur;
             // Past the end with no new track yet: hand over to a transitional
             // state rather than holding the final line lit under a full bar.
-            if (!endedRef.current) {
+            if (!endedRef.current && !handoverExpiredRef.current) {
               endedRef.current = true;
               setAwaitingNext(true);
             }
@@ -250,33 +279,53 @@ export default function App() {
     return () => cancelAnimationFrame(rafRef.current);
   }, [demo]);
 
-  // Fetch lyrics when title/artist change
+  // Safety net: if the next track never shows up, fall back to what we have
+  // rather than sitting on the handover indefinitely.
+  useEffect(() => {
+    if (!awaitingNext) return undefined;
+    const t = setTimeout(() => {
+      handoverExpiredRef.current = true;
+      endedRef.current = false;
+      setAwaitingNext(false);
+    }, AWAITING_MAX_MS);
+    return () => clearTimeout(t);
+  }, [awaitingNext]);
+
+  // Fetch lyrics when the track changes.
+  //
+  // Depends on trackId (a string), NOT the media object. Every poll calls
+  // setMedia with a freshly built object, so depending on `media` re-ran this
+  // effect each poll: the cleanup flipped `cancelled` and discarded the
+  // in-flight response, while the track key had already been claimed, so
+  // nothing ever refetched. Any lyrics request slower than the poll interval
+  // could never land and the UI sat on "Fetching lyrics…" until a reload.
   useEffect(() => {
     if (demo) return undefined;
-    const key = trackKey(media);
-    if (!key || key === '|' || key === lastTrackKey.current) return;
-    if (!media?.title || !media?.artist) {
+    const m = mediaRef.current;
+    if (!trackId || trackId === '|') return undefined;
+    if (!m?.title || !m?.artist) {
       setLyrics({ lines: [], plainLyrics: null, ok: false });
       setLyricsStatus('Waiting for title & artist…');
-      return;
+      return undefined;
     }
 
-    lastTrackKey.current = key;
     let cancelled = false;
+    let retryTimer = 0;
     setLyricsStatus('Fetching lyrics…');
     setLyrics({ lines: [], plainLyrics: null, ok: false });
 
     const durationSec =
-      media.durationMs > 0 ? Math.round(media.durationMs / 1000) : undefined;
-    const qs = new URLSearchParams({
-      title: media.title,
-      artist: media.artist,
-    });
+      m.durationMs > 0 ? Math.round(m.durationMs / 1000) : undefined;
+    const qs = new URLSearchParams({ title: m.title, artist: m.artist });
     if (durationSec) qs.set('duration', String(durationSec));
 
-    (async () => {
+    (async function attempt(tries = 1) {
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), LYRICS_TIMEOUT_MS);
       try {
-        const res = await fetch(`/api/lyrics?${qs.toString()}`);
+        const res = await fetch(`/api/lyrics?${qs.toString()}`, {
+          signal: controller.signal,
+        });
         const data = await res.json();
         if (cancelled) return;
         if (data.ok) {
@@ -298,20 +347,28 @@ export default function App() {
           setLyricsStatus(data.message || 'No lyrics found');
         }
       } catch (err) {
-        if (!cancelled) {
-          // Release the claim so the next poll retries instead of leaving the
-          // track permanently lyric-less after one transient failure.
-          lastTrackKey.current = '';
+        if (cancelled) return;
+        if (tries < LYRICS_MAX_ATTEMPTS) {
+          setLyricsStatus('Retrying lyrics…');
+          retryTimer = setTimeout(() => attempt(tries + 1), LYRICS_RETRY_MS);
+        } else {
           setLyrics({ lines: [], plainLyrics: null, ok: false });
-          setLyricsStatus(`Lyrics error: ${err.message}`);
+          setLyricsStatus(
+            err.name === 'AbortError'
+              ? 'Lyrics timed out'
+              : `Lyrics error: ${err.message}`
+          );
         }
+      } finally {
+        clearTimeout(abortTimer);
       }
     })();
 
     return () => {
       cancelled = true;
+      clearTimeout(retryTimer);
     };
-  }, [media, demo]);
+  }, [trackId, demo]);
 
   const hasTrack = Boolean(media?.title);
   const trackBg = trackBackground(media);
