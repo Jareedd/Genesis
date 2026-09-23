@@ -19,6 +19,15 @@ services:
         value: https://fleet-api.prd.na.vn.cloud.tesla.com
       # Set the rest in the Render dashboard (Environment tab) — sync:false
       # means "prompt me, don't store in git".
+      # Owner login — REQUIRED. Without it the app stays locked and never
+      # exposes vehicle data.
+      - key: OWNER_PASSWORD
+        sync: false
+      # Optional: username for the login form, and setup-route toggle.
+      - key: OWNER_USERNAME
+        sync: false
+      - key: ENABLE_SETUP_ROUTES
+        sync: false
       - key: TESLA_CLIENT_ID
         sync: false
       - key: TESLA_CLIENT_SECRET

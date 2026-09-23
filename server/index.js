@@ -3,7 +3,6 @@
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
-const cors = require('cors');
 const axios = require('axios');
 const dotenv = require('dotenv');
 
@@ -13,13 +12,27 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const { getMediaState, canRefresh, registerPartnerDomain, partnerDomain, listVehicles } = require('./tesla');
 const { fetchLyrics } = require('./lyrics');
+const { getMediaCached } = require('./media-cache');
+const {
+  applyBaseSecurity,
+  loginRateLimiter,
+  handleLogin,
+  handleLogout,
+  handleSession,
+  requireAuth,
+  authConfigured,
+  setupRoutesEnabled,
+  requireSetupEnabled,
+} = require('./security');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const isProd = process.env.NODE_ENV === 'production';
 
-app.use(cors());
 app.use(express.json());
+// Security headers + signed session cookie. Same-origin (client is served by
+// this server, or proxied through Vite in dev), so CORS is intentionally gone.
+applyBaseSecurity(app);
 
 // --- Tesla partner public key (required for Fleet API third-party apps) ---
 const publicKeyCandidates = [
@@ -83,10 +96,18 @@ app.get('/.well-known/appspecific/com.tesla.3p.public-key.pem', (req, res) => {
   fs.createReadStream(pemPath).pipe(res);
 });
 
-// --- Media + lyrics APIs ---
-app.get('/api/media_state', async (req, res) => {
+// --- Owner authentication ---
+// Vehicle data is gated behind an owner login. With no OWNER_PASSWORD set the
+// protected routes refuse rather than expose the car (see security.js).
+app.get('/api/session', handleSession);
+app.post('/api/login', loginRateLimiter, handleLogin);
+app.post('/api/logout', handleLogout);
+
+// --- Media + lyrics APIs (owner-only) ---
+app.get('/api/media_state', requireAuth, async (req, res) => {
   try {
-    const state = await getMediaState();
+    // Cache briefly so rapid polls don't each bill a Fleet API call.
+    const state = await getMediaCached(() => getMediaState());
     res.json(state);
   } catch (err) {
     res.status(500).json({
@@ -98,7 +119,7 @@ app.get('/api/media_state', async (req, res) => {
   }
 });
 
-app.get('/api/lyrics', async (req, res) => {
+app.get('/api/lyrics', requireAuth, async (req, res) => {
   try {
     const { title, artist, duration } = req.query;
     const result = await fetchLyrics({
@@ -120,6 +141,8 @@ app.get('/api/lyrics', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
+    authConfigured: authConfigured(),
+    setupRoutes: setupRoutesEnabled(),
     hasToken: Boolean(process.env.TESLA_ACCESS_TOKEN),
     canRefresh: canRefresh(),
     hasVehicleId: Boolean(process.env.TESLA_VEHICLE_ID),
@@ -129,10 +152,10 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// --- Optional OAuth scaffolding ---
+// --- Optional OAuth scaffolding (owner-only, off unless ENABLE_SETUP_ROUTES) ---
 const AUTH_BASE = 'https://auth.tesla.com/oauth2/v3';
 
-app.get('/oauth/start', (req, res) => {
+app.get('/oauth/start', requireSetupEnabled, requireAuth, (req, res) => {
   const clientId = process.env.TESLA_CLIENT_ID;
   const redirectUri = process.env.TESLA_REDIRECT_URI;
   if (!clientId || !redirectUri) {
@@ -155,7 +178,7 @@ app.get('/oauth/start', (req, res) => {
   res.redirect(`${AUTH_BASE}/authorize?${params.toString()}`);
 });
 
-app.get('/oauth/callback', async (req, res) => {
+app.get('/oauth/callback', requireSetupEnabled, requireAuth, async (req, res) => {
   const { code, error, error_description: errorDesc } = req.query;
   if (error) {
     return res
@@ -228,7 +251,7 @@ code,pre{background:#222;padding:.5rem;display:block;overflow:auto;word-break:br
 
 // --- Vehicle picker: the value TESLA_VEHICLE_ID expects ---
 // Renders a table in a browser, returns JSON to anything else.
-app.get('/api/vehicles', async (req, res) => {
+app.get('/api/vehicles', requireSetupEnabled, requireAuth, async (req, res) => {
   let result;
   try {
     result = await listVehicles();
@@ -279,7 +302,7 @@ ${rows || '<tr><td colspan="4"><em>No vehicles on this account.</em></td></tr>'}
 // Tesla will not serve vehicle data until the app's domain is registered.
 // GET renders a confirmation page; the POST behind it does the work, so a
 // crawler or prefetch can never trigger the call.
-app.get('/api/partner/register', (req, res) => {
+app.get('/api/partner/register', requireSetupEnabled, requireAuth, (req, res) => {
   const domain = partnerDomain();
   res.type('text/html').send(`<!DOCTYPE html>
 <html><head><title>Register Tesla partner domain</title>
@@ -316,7 +339,7 @@ if (btn) btn.onclick = async () => {
 </body></html>`);
 });
 
-app.post('/api/partner/register', async (req, res) => {
+app.post('/api/partner/register', requireSetupEnabled, requireAuth, async (req, res) => {
   try {
     const result = await registerPartnerDomain();
     res.status(result.ok ? 200 : 400).json(result);
@@ -342,6 +365,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`[tesla-lyrics] server listening on port ${PORT}`);
   console.log(
     `[tesla-lyrics] token=${process.env.TESLA_ACCESS_TOKEN ? 'set' : 'MISSING'} refresh=${canRefresh() ? 'set' : 'MISSING'} vehicle=${process.env.TESLA_VEHICLE_ID || 'MISSING'}`
+  );
+  console.log(
+    `[tesla-lyrics] owner-login=${authConfigured() ? 'set' : 'MISSING (vehicle data locked)'} setup-routes=${setupRoutesEnabled() ? 'enabled' : 'disabled'}`
   );
   if (isProd && !fs.existsSync(clientDist)) {
     console.warn(

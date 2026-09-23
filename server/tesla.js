@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 
 const FLEET_BASE =
@@ -9,12 +11,52 @@ const FLEET_BASE =
 const AUTH_TOKEN_URL = 'https://auth.tesla.com/oauth2/v3/token';
 
 // Tesla access tokens expire after ~8 hours. A long-running deployment must
-// refresh them itself, so the token lives in memory and is re-minted from
-// TESLA_REFRESH_TOKEN on demand.
+// refresh them itself, so the token lives in memory and is re-minted from the
+// refresh token on demand.
 let tokenCache = { accessToken: null, expiresAt: 0 };
 
+// Tesla rotates the refresh token on every refresh and eventually invalidates
+// the previous one. The env var (TESLA_REFRESH_TOKEN) is only a seed — once the
+// first rotation happens it goes stale, so the current token is persisted and
+// preferred. Point TESLA_TOKEN_STORE at a Render disk to survive restarts;
+// otherwise it still survives every in-process refresh.
+const TOKEN_STORE_PATH =
+  process.env.TESLA_TOKEN_STORE || path.join(__dirname, '.token-store.json');
+
+function loadPersistedRefreshToken() {
+  try {
+    const data = JSON.parse(fs.readFileSync(TOKEN_STORE_PATH, 'utf8'));
+    if (data && typeof data.refresh_token === 'string' && data.refresh_token) {
+      return data.refresh_token;
+    }
+  } catch {
+    /* no store yet, or unreadable — fall back to the env seed */
+  }
+  return null;
+}
+
+function persistRefreshToken(token) {
+  if (!token) return;
+  try {
+    fs.writeFileSync(
+      TOKEN_STORE_PATH,
+      JSON.stringify({ refresh_token: token, updatedAt: new Date().toISOString() }, null, 2),
+      { mode: 0o600 }
+    );
+  } catch (err) {
+    console.error(`[tesla-lyrics] could not persist rotated refresh token: ${err.message}`);
+  }
+}
+
+let currentRefreshToken =
+  loadPersistedRefreshToken() || process.env.TESLA_REFRESH_TOKEN || null;
+
+function getRefreshToken() {
+  return currentRefreshToken || process.env.TESLA_REFRESH_TOKEN || null;
+}
+
 function canRefresh() {
-  return Boolean(process.env.TESLA_REFRESH_TOKEN && process.env.TESLA_CLIENT_ID);
+  return Boolean(getRefreshToken() && process.env.TESLA_CLIENT_ID);
 }
 
 async function refreshAccessToken() {
@@ -23,7 +65,7 @@ async function refreshAccessToken() {
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: process.env.TESLA_CLIENT_ID,
-    refresh_token: process.env.TESLA_REFRESH_TOKEN,
+    refresh_token: getRefreshToken(),
   });
   if (process.env.TESLA_CLIENT_SECRET) {
     body.set('client_secret', process.env.TESLA_CLIENT_SECRET);
@@ -40,6 +82,14 @@ async function refreshAccessToken() {
       (res.data && (res.data.error_description || res.data.error)) || res.statusText;
     console.error(`[tesla-lyrics] token refresh failed (${res.status}): ${detail}`);
     return null;
+  }
+
+  // Persist the rotated refresh token so the next restart / refresh uses the
+  // live one instead of the now-stale seed.
+  if (res.data.refresh_token && res.data.refresh_token !== currentRefreshToken) {
+    currentRefreshToken = res.data.refresh_token;
+    persistRefreshToken(currentRefreshToken);
+    console.log('[tesla-lyrics] stored rotated refresh token');
   }
 
   const ttlMs = (Number(res.data.expires_in) || 8 * 3600) * 1000;
