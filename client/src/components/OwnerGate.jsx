@@ -66,13 +66,15 @@ export default function OwnerGate({ configured, usernameRequired, onAuthenticate
                 />
               ) : null}
               <input
-                className={input}
+                className={`${input} text-center tracking-[0.5em]`}
                 type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 autoComplete="current-password"
-                placeholder="Password"
+                placeholder="PIN"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                aria-label="Password"
+                aria-label="PIN"
                 autoFocus
               />
               <button
