@@ -10,7 +10,14 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-const { getMediaState, canRefresh, registerPartnerDomain, partnerDomain, listVehicles } = require('./tesla');
+const {
+  getMediaState,
+  canRefresh,
+  tokenStoreBackend,
+  registerPartnerDomain,
+  partnerDomain,
+  listVehicles,
+} = require('./tesla');
 const { fetchLyrics } = require('./lyrics');
 const { getMediaCached } = require('./media-cache');
 const {
@@ -145,6 +152,7 @@ app.get('/api/health', (req, res) => {
     setupRoutes: setupRoutesEnabled(),
     hasToken: Boolean(process.env.TESLA_ACCESS_TOKEN),
     canRefresh: canRefresh(),
+    tokenStore: tokenStoreBackend(),
     hasVehicleId: Boolean(process.env.TESLA_VEHICLE_ID),
     publicKey: hasPublicKey(),
     clientBuilt: fs.existsSync(path.resolve(__dirname, '../client/dist/index.html')),

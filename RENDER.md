@@ -104,6 +104,30 @@ Confirm with `GET /api/health`: it reports `canRefresh: true`.
 
 ---
 
+## 3b. Token store (required on Render)
+
+Tesla **rotates the refresh token on every refresh** and invalidates the
+previous one. `TESLA_REFRESH_TOKEN` is therefore only a seed — once the first
+rotation happens it is dead.
+
+Render's filesystem is ephemeral and disks are a paid feature, so storing the
+rotated token in a file loses it on every deploy and every free-tier
+spin-down. The app then falls back to the dead seed and Tesla answers 401,
+which surfaces in the UI as a rejected-token message.
+
+Set up a free store instead:
+
+1. Create a database at [upstash.com](https://upstash.com) (free tier)
+2. From its REST section, copy the URL and token into Render:
+   - `UPSTASH_REDIS_REST_URL`
+   - `UPSTASH_REDIS_REST_TOKEN`
+3. Redeploy and check `/api/health` — it should report `"tokenStore":"upstash"`
+
+With no Upstash values set the app falls back to a local file, which is fine
+for development and **not** sufficient on Render.
+
+---
+
 ## 4. Partner public key
 
 Tesla requires the PEM at
@@ -192,7 +216,7 @@ or an external uptime pinger avoids the cold start.
 | `vite: not found` during build | build command missing `--include=dev` |
 | Build succeeds, app shows "Not Found" at `/` | `npm run build` didn't run, or `NODE_ENV` isn't `production` — check `clientBuilt` in `/api/health` |
 | Deploy hangs, "no open ports detected" | a `PORT` env var was set, overriding Render's |
-| `/api/media_state` → `unauthorized` | token expired; set `TESLA_REFRESH_TOKEN` (§3) |
+| `/api/media_state` → `unauthorized` | refresh token rotated away and was not persisted — check `"tokenStore"` in `/api/health` (§3b), then re-run OAuth |
 | Registration returns 403 or 412 | Tesla can't fetch your public key — test that URL in a browser first |
 | Vehicle data 403s despite a valid token | domain never registered — do §5 |
 | `/api/media_state` → `vehicle_asleep` | wake the car from the Tesla app; Fleet returns 408/504 while asleep |

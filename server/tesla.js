@@ -1,8 +1,7 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const axios = require('axios');
+const tokenStore = require('./token-store');
 
 const FLEET_BASE =
   process.env.TESLA_FLEET_BASE_URL ||
@@ -16,40 +15,31 @@ const AUTH_TOKEN_URL = 'https://auth.tesla.com/oauth2/v3/token';
 let tokenCache = { accessToken: null, expiresAt: 0 };
 
 // Tesla rotates the refresh token on every refresh and eventually invalidates
-// the previous one. The env var (TESLA_REFRESH_TOKEN) is only a seed — once the
-// first rotation happens it goes stale, so the current token is persisted and
-// preferred. Point TESLA_TOKEN_STORE at a Render disk to survive restarts;
-// otherwise it still survives every in-process refresh.
-const TOKEN_STORE_PATH =
-  process.env.TESLA_TOKEN_STORE || path.join(__dirname, '.token-store.json');
+// the previous one, so TESLA_REFRESH_TOKEN is only a seed. The live value is
+// kept in the token store (see token-store.js), which survives restarts.
+let currentRefreshToken = process.env.TESLA_REFRESH_TOKEN || null;
+let hydration = null;
 
-function loadPersistedRefreshToken() {
-  try {
-    const data = JSON.parse(fs.readFileSync(TOKEN_STORE_PATH, 'utf8'));
-    if (data && typeof data.refresh_token === 'string' && data.refresh_token) {
-      return data.refresh_token;
-    }
-  } catch {
-    /* no store yet, or unreadable — fall back to the env seed */
+// Load the stored token once. canRefresh() stays synchronous for the health
+// route, so this hydrates in the background and is awaited before any refresh
+// actually goes out.
+function ensureHydrated() {
+  if (!hydration) {
+    hydration = tokenStore
+      .readRefreshToken()
+      .then((stored) => {
+        if (stored) {
+          currentRefreshToken = stored;
+          console.log(`[tesla-lyrics] refresh token loaded from ${tokenStore.backend()} store`);
+        }
+      })
+      .catch((err) => {
+        console.error(`[tesla-lyrics] token store unavailable: ${err.message}`);
+      });
   }
-  return null;
+  return hydration;
 }
-
-function persistRefreshToken(token) {
-  if (!token) return;
-  try {
-    fs.writeFileSync(
-      TOKEN_STORE_PATH,
-      JSON.stringify({ refresh_token: token, updatedAt: new Date().toISOString() }, null, 2),
-      { mode: 0o600 }
-    );
-  } catch (err) {
-    console.error(`[tesla-lyrics] could not persist rotated refresh token: ${err.message}`);
-  }
-}
-
-let currentRefreshToken =
-  loadPersistedRefreshToken() || process.env.TESLA_REFRESH_TOKEN || null;
+ensureHydrated();
 
 function getRefreshToken() {
   return currentRefreshToken || process.env.TESLA_REFRESH_TOKEN || null;
@@ -59,7 +49,21 @@ function canRefresh() {
   return Boolean(getRefreshToken() && process.env.TESLA_CLIENT_ID);
 }
 
+// Serialised: with a rotating refresh token, two concurrent refreshes would
+// race and one would invalidate the other's token.
+let refreshInFlight = null;
+
 async function refreshAccessToken() {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefreshAccessToken().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function doRefreshAccessToken() {
+  await ensureHydrated();
   if (!canRefresh()) return null;
 
   const body = new URLSearchParams({
@@ -88,8 +92,12 @@ async function refreshAccessToken() {
   // live one instead of the now-stale seed.
   if (res.data.refresh_token && res.data.refresh_token !== currentRefreshToken) {
     currentRefreshToken = res.data.refresh_token;
-    persistRefreshToken(currentRefreshToken);
-    console.log('[tesla-lyrics] stored rotated refresh token');
+    const saved = await tokenStore.writeRefreshToken(currentRefreshToken);
+    console.log(
+      saved
+        ? `[tesla-lyrics] rotated refresh token saved to ${tokenStore.backend()} store`
+        : '[tesla-lyrics] WARNING: rotated refresh token could not be saved — it will be lost on restart'
+    );
   }
 
   const ttlMs = (Number(res.data.expires_in) || 8 * 3600) * 1000;
@@ -436,6 +444,7 @@ async function listVehicles() {
 
 module.exports = {
   getMediaState,
+  tokenStoreBackend: tokenStore.backend,
   listVehicles,
   getPartnerToken,
   registerPartnerDomain,
