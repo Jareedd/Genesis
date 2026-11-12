@@ -123,6 +123,10 @@ Set up a free store instead:
    - `UPSTASH_REDIS_REST_TOKEN`
 3. Redeploy and check `/api/health` — it should report `"tokenStore":"upstash"`
 
+The same database caches lyrics (30 days for hits, 6 hours for misses), so a
+song you've played before loads instantly and keeps working through LRCLIB
+outages. Transient failures are never cached.
+
 With no Upstash values set the app falls back to a local file, which is fine
 for development and **not** sufficient on Render.
 
@@ -217,6 +221,7 @@ or an external uptime pinger avoids the cold start.
 | Build succeeds, app shows "Not Found" at `/` | `npm run build` didn't run, or `NODE_ENV` isn't `production` — check `clientBuilt` in `/api/health` |
 | Deploy hangs, "no open ports detected" | a `PORT` env var was set, overriding Render's |
 | `/api/media_state` → `unauthorized` | refresh token rotated away and was not persisted — check `"tokenStore"` in `/api/health` (§3b), then re-run OAuth |
+| "Lyrics service is busy — retrying…" | LRCLIB is returning 5xx; the app retries for about a minute on its own |
 | Registration returns 403 or 412 | Tesla can't fetch your public key — test that URL in a browser first |
 | Vehicle data 403s despite a valid token | domain never registered — do §5 |
 | `/api/media_state` → `vehicle_asleep` | wake the car from the Tesla app; Fleet returns 408/504 while asleep |
