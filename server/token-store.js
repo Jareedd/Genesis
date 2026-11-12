@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
+const { kvEnabled, kvCommand } = require('./kv');
 
 // Where the live Tesla refresh token lives.
 //
@@ -17,32 +17,15 @@ const axios = require('axios');
 // fallback so nothing extra is needed to run this on a laptop.
 
 const KEY = process.env.TESLA_TOKEN_KEY || 'teslyr:tesla_refresh_token';
-const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
 const FILE_PATH =
   process.env.TESLA_TOKEN_STORE || path.join(__dirname, '.token-store.json');
 
 function usingRedis() {
-  return Boolean(REDIS_URL && REDIS_TOKEN);
+  return kvEnabled();
 }
 
 function backend() {
   return usingRedis() ? 'upstash' : 'file';
-}
-
-async function redisCommand(command) {
-  const res = await axios.post(REDIS_URL, command, {
-    headers: {
-      Authorization: `Bearer ${REDIS_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    timeout: 8000,
-    validateStatus: () => true,
-  });
-  if (res.status >= 400) {
-    throw new Error(`Upstash ${res.status}: ${JSON.stringify(res.data)}`);
-  }
-  return res.data ? res.data.result : null;
 }
 
 function readFileToken() {
@@ -72,7 +55,7 @@ function writeFileToken(token) {
 async function readRefreshToken() {
   if (usingRedis()) {
     try {
-      const value = await redisCommand(['GET', KEY]);
+      const value = await kvCommand(['GET', KEY]);
       if (typeof value === 'string' && value) return value;
       return null;
     } catch (err) {
@@ -88,7 +71,7 @@ async function writeRefreshToken(token) {
 
   if (usingRedis()) {
     try {
-      await redisCommand(['SET', KEY, token]);
+      await kvCommand(['SET', KEY, token]);
       return true;
     } catch (err) {
       console.error(`[tesla-lyrics] token store write failed: ${err.message}`);

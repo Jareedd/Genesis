@@ -14,9 +14,12 @@ const TRACK_END_WINDOW_MS = 4000;
 // A vehicle_data call takes ~1s warm but 10s+ when the car is waking. Cap it so
 // one slow request can't stall the loop.
 const REQUEST_TIMEOUT_MS = 12000;
-const LYRICS_TIMEOUT_MS = 8000;
-const LYRICS_RETRY_MS = 1500;
-const LYRICS_MAX_ATTEMPTS = 3;
+// The server spends up to ~11s on its own LRCLIB retries and fallbacks, so the
+// client must wait longer than that or it abandons lookups that would succeed.
+const LYRICS_TIMEOUT_MS = 15000;
+// Backoff between client attempts. Covers roughly a minute of LRCLIB outage
+// before giving up, and each attempt already includes the server's retries.
+const LYRICS_RETRY_DELAYS_MS = [2000, 4000, 8000, 15000, 20000];
 // Never let the end-of-track handover become a dead end.
 const AWAITING_MAX_MS = 10000;
 
@@ -391,15 +394,29 @@ export default function App() {
                 ? ''
                 : 'Unsynced lyrics only'
           );
+        } else if (data.retryable && tries <= LYRICS_RETRY_DELAYS_MS.length) {
+          // The server reached LRCLIB but it was down. Previously this landed
+          // in the branch below and was treated as final, so one 502 cost the
+          // whole track.
+          setLyricsStatus(data.message || 'Lyrics service is busy — retrying…');
+          retryTimer = setTimeout(
+            () => attempt(tries + 1),
+            LYRICS_RETRY_DELAYS_MS[tries - 1]
+          );
         } else {
           setLyrics({ lines: [], plainLyrics: null, ok: false });
-          setLyricsStatus(data.message || 'No lyrics found');
+          setLyricsStatus(
+            data.retryable ? 'Lyrics service unavailable' : data.message || 'No lyrics found'
+          );
         }
       } catch (err) {
         if (cancelled) return;
-        if (tries < LYRICS_MAX_ATTEMPTS) {
+        if (tries <= LYRICS_RETRY_DELAYS_MS.length) {
           setLyricsStatus('Retrying lyrics…');
-          retryTimer = setTimeout(() => attempt(tries + 1), LYRICS_RETRY_MS);
+          retryTimer = setTimeout(
+            () => attempt(tries + 1),
+            LYRICS_RETRY_DELAYS_MS[tries - 1]
+          );
         } else {
           setLyrics({ lines: [], plainLyrics: null, ok: false });
           setLyricsStatus(
