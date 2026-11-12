@@ -14,7 +14,6 @@ function friendlyStatus(status) {
     missing_token: 'Add Tesla token',
     missing_vehicle_id: 'Set vehicle id',
     vehicle_asleep: 'Vehicle asleep',
-    network_error: 'Reconnect…',
   };
   if (status.error && map[status.error]) return map[status.error];
   const msg = status.message || '';
@@ -28,9 +27,11 @@ export default function NowPlaying({ media, status, positionMs }) {
   const album = media?.album || '';
   const durationMs = media?.durationMs || 0;
   const connected = Boolean(status?.ok);
-  const playback = media?.playbackStatus
-    || (connected ? status?.message : friendlyStatus(status))
-    || 'Offline';
+  // A connection problem has to win over the last-known playback state:
+  // otherwise the header keeps saying "Playing" while nothing is updating.
+  const playback = connected
+    ? media?.playbackStatus || status?.message || 'Offline'
+    : friendlyStatus(status) || 'Offline';
 
   const progress =
     durationMs > 0 ? Math.min(100, (positionMs / durationMs) * 100) : 0;
